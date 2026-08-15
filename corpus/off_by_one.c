@@ -1,39 +1,49 @@
 /* Sanjeevani corpus 2/3 - off-by-one write.
  *
- * BUG: the loop says  i <= len  where it should say  i < len.
- *      That writes one byte past the end of the buffer. When the input is
- *      exactly N bytes long, that byte lands outside the malloc'd chunk and
- *      corrupts glibc's heap metadata, so free() aborts.
+ * BUG: slot[] has NSLOT entries, but the loop condition is  i <= slots,
+ *      so it runs one iteration too many and writes slot[NSLOT] - which is
+ *      one past the end of the array.
  *
- * N is 24 on purpose: malloc(24) hands back exactly 24 usable bytes, so
- * index 24 is genuinely out of bounds. With a smaller N, malloc's rounding
- * would silently absorb the overflow and nothing would crash.
+ * Why an array of POINTERS rather than an array of chars:
+ * we first tried overflowing a char buffer by one byte. It never crashed.
+ * A single stray byte only nudges the neighbouring value slightly - a
+ * pointer stays inside the same mapped page, a length stays plausible - so
+ * nothing faults and the fuzzer finds nothing. Overrunning an array of
+ * pointers overwrites a whole 8-byte pointer with input bytes, which gives a
+ * wild address for any input at all. That makes the crash depend only on the
+ * input's LENGTH, never on the particular bytes, so it reproduces every time.
+ *
+ * Crashes on any input of 24 or more characters. Exits cleanly below that.
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-#define N 24
+#define NSLOT 3
+
+struct rec {
+    char *slot[NSLOT];
+    char *tail;                 /* C guarantees this sits right after slot[] */
+};
 
 int main(void)
 {
     char in[64];
 
+    memset(in, 0, sizeof in);   /* no uninitialised stack, so runs are repeatable */
     if (!fgets(in, sizeof in, stdin))
         return 1;
 
-    size_t len = strcspn(in, "\n");
-    if (len > N)
-        len = N;
+    size_t n     = strcspn(in, "\n");
+    size_t slots = n / 8;
+    if (slots > NSLOT)
+        slots = NSLOT;
 
-    char *tbl = malloc(N);
-    if (!tbl)
-        return 1;
+    struct rec r;
+    r.tail = "end";
 
-    for (size_t i = 0; i <= len; i++)   /* BUG: should be i < len */
-        tbl[i] = in[i];
+    for (size_t i = 0; i <= slots; i++)         /* BUG: should be i < slots */
+        memcpy(&r.slot[i], in + i * 8, 8);
 
-    printf("%zu\n", len);
-    free(tbl);                          /* aborts when the heap was corrupted */
+    puts(r.tail);               /* tail was overwritten with input bytes */
     return 0;
 }

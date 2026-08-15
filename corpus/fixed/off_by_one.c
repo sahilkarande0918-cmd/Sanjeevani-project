@@ -1,33 +1,37 @@
 /* GROUND TRUTH fix for corpus/off_by_one.c
  *
- * One character changed: <= became <. That is the entire fix.
- * The loop now writes indices 0..len-1, all inside the buffer.
+ * One character changed: <= became <. The loop now writes slot[0..slots-1],
+ * every one of them inside the array, and r.tail is left alone.
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-#define N 24
+#define NSLOT 3
+
+struct rec {
+    char *slot[NSLOT];
+    char *tail;
+};
 
 int main(void)
 {
     char in[64];
 
+    memset(in, 0, sizeof in);
     if (!fgets(in, sizeof in, stdin))
         return 1;
 
-    size_t len = strcspn(in, "\n");
-    if (len > N)
-        len = N;
+    size_t n     = strcspn(in, "\n");
+    size_t slots = n / 8;
+    if (slots > NSLOT)
+        slots = NSLOT;
 
-    char *tbl = malloc(N);
-    if (!tbl)
-        return 1;
+    struct rec r;
+    r.tail = "end";
 
-    for (size_t i = 0; i < len; i++)    /* FIX: was i <= len */
-        tbl[i] = in[i];
+    for (size_t i = 0; i < slots; i++)          /* FIX: was i <= slots */
+        memcpy(&r.slot[i], in + i * 8, 8);
 
-    printf("%zu\n", len);
-    free(tbl);
+    puts(r.tail);
     return 0;
 }
