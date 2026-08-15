@@ -1,0 +1,43 @@
+# Sanjeevani build file.
+#
+# Compile flags, and why each one is here:
+#   -O0                    no optimisation, so decompiled C stays readable
+#   -no-pie                fixed load addresses, so patch addresses are stable
+#   -fno-stack-protector   no random stack canary; a canary is a random value
+#                          angr would have to treat as unknown, which makes the
+#                          Phase 2 proof much harder for no benefit
+#   -U_FORTIFY_SOURCE      stop glibc swapping strcpy/printf for "checked"
+#                          versions that would defuse the very bugs we planted
+#   -fcf-protection=none   drop endbr64 padding instructions, less noise
+#   -g0                    no debug info (we strip anyway)
+
+CC      := gcc
+CFLAGS  := -O0 -no-pie -fno-stack-protector -U_FORTIFY_SOURCE -fcf-protection=none -g0
+OUT     := corpus/out
+NAMES   := stack_overflow off_by_one format_string
+
+BROKEN  := $(addprefix $(OUT)/,$(addsuffix .broken,$(NAMES)))
+FIXED   := $(addprefix $(OUT)/,$(addsuffix .fixed,$(NAMES)))
+
+.PHONY: corpus verify-corpus clean
+
+corpus: $(BROKEN) $(FIXED)
+	@echo "corpus built -> $(OUT)/"
+
+$(OUT)/%.broken: corpus/%.c | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $<
+	strip $@
+
+$(OUT)/%.fixed: corpus/fixed/%.c | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $<
+	strip $@
+
+$(OUT):
+	mkdir -p $(OUT)
+
+# Acceptance check: every .broken must crash, every .fixed must survive.
+verify-corpus: corpus
+	@bash scripts/verify_corpus.sh
+
+clean:
+	rm -rf $(OUT)
