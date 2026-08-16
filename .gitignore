@@ -1,26 +1,22 @@
+
 # Compiled binaries - rebuilt by `make corpus`
-corpus/out/
-
-# The 4.7 GB model. Fetched by `make model`, never committed.
-models/
-*.gguf
-
-# Third-party tools installed into the project by setup
-tools/
-.venv/
-
 # Fuzzer output: thousands of files, regenerated every run
-findings/
-crashes/
-*.afl
-
 # Ghidra scratch space
-ghidra_proj/
-*.rep
-*.gpr
-
-__pycache__/
-*.pyc
-
+# The 4.7 GB model. Fetched by `make model`, never committed.
+# Third-party tools installed into the project by setup
 # Throwaway probe scripts
+*.afl
+*.gguf
+*.gpr
+*.pyc
+*.rep
+.venv/
+__pycache__/
+corpus/out/
+crashes/
+findings/
+ghidra_proj/
+models/
+proofs/
 scripts/_*.sh
+tools/
