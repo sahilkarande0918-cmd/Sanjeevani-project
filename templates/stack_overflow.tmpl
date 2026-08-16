@@ -10,13 +10,20 @@ cwe: CWE-121 stack buffer overflow
 detect: \bstrcpy\s*\(
 
 # What to rewrite. Groups are the destination and source.
+#
+# The obvious replacement is strncpy, and for SOURCE code it would be right.
+# For BINARY patching it fails: the target only links against the functions it
+# already imports, and a binary that called strcpy has no PLT entry for
+# strncpy, so the patch will not link. The bounded copy is therefore written
+# out inline - it calls nothing, so it always links.
 find: strcpy\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)
-replace: strncpy(\1, \2, sizeof(\1) - 1); \1[sizeof(\1) - 1] = '\0'
+replace: { unsigned long _i; for (_i = 0; _i + 1 < sizeof(\1) && \2[_i]; _i++) \1[_i] = \2[_i]; \1[_i] = '\0'; }
 
 explain: strcpy copies until it meets a NUL byte and has no idea how large the
- destination is. strncpy takes a maximum. sizeof(dst) - 1 leaves room for the
- terminator, which strncpy does NOT add when it truncates, hence the explicit
- assignment.
+ destination is. The replacement copies at most sizeof(dst) - 1 bytes and then
+ terminates the string itself. It is written as an inline loop rather than a
+ call to strncpy because a patched binary can only call functions it already
+ imports.
 
 # Honest note carried into the patch report. This is a real trade-off, not a
 # detail to hide: the proof step will flag it on inputs the original survived.

@@ -161,6 +161,7 @@ PRELUDE = """\
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 typedef unsigned long  undefined8;
 typedef unsigned int   undefined4;
@@ -240,22 +241,24 @@ def patch_from_report(report_path: Path, use_model: bool = True) -> dict:
     # The blamed function is not always the buggy one - an overflow in greet()
     # faults only once greet RETURNS, so blame lands on main. Phase 3 therefore
     # decompiles callees too. Pick whichever body a template recognises.
-    bodies = [(fn.get("function", "?"), fn.get("decompiled", ""))]
-    bodies += [(c["function"], c["decompiled"]) for c in fn.get("callees", [])]
+    # Carry the ENTRY ADDRESS through, not just the name. Phase 5 has to tell
+    # Patcherex2 which function to overwrite, and it needs an address.
+    bodies = [(fn.get("function", "?"), fn.get("entry"), fn.get("decompiled", ""))]
+    bodies += [(c["function"], c.get("entry"), c["decompiled"]) for c in fn.get("callees", [])]
 
-    for name, body in bodies:
+    for name, entry, body in bodies:
         if body and try_templates(body):
-            print(f"[WRITE]     bug found in {name}")
+            print(f"[WRITE]     bug found in {name} @ {entry}")
             out = synth(body, use_model)
-            out["target_function"] = name
-            out["original_c"] = body
+            out.update(target_function=name, target_entry=entry,
+                       original_c=body, binary=report.get("binary"))
             return out
 
-    name, body = bodies[0]
+    name, entry, body = bodies[0]
     print(f"[WRITE]     no template matched; using blamed function {name}")
     out = synth(body, use_model)
-    out["target_function"] = name
-    out["original_c"] = body
+    out.update(target_function=name, target_entry=entry,
+               original_c=body, binary=report.get("binary"))
     return out
 
 

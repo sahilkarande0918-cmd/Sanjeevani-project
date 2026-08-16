@@ -1,5 +1,42 @@
 # STATUS
 
+## Phase 5 — SPLICE  🟢 ACCEPTANCE MET (3 of 3)
+
+```
+BINARY             CRASH_FIXED   BENIGN_SAME   RESULT
+format_string      True          True          PASS
+off_by_one         True          True          PASS
+stack_overflow     True          True          PASS
+```
+`splicer/rewrite.py` writes the Phase 4 patch back into the compiled program with
+Patcherex2 and produces a new ELF. Both halves are checked, because fixing the
+crash alone is trivial — `return 0` fixes every crash ever written. What makes a
+patch real is that normal behaviour survives it.
+
+### The constraint that does not exist when patching source
+**A patch may only call functions the binary already imports.** Replacing `strcpy`
+with `strncpy` is the textbook source fix and it does not link here: a program
+that called `strcpy` has no PLT entry for `strncpy`, and you cannot bolt a new
+library dependency onto a compiled ELF. The `stack_overflow` template now emits
+an **inline bounded copy loop** that calls nothing. `splicer/rewrite.py` also
+reads the binary's symbol table and warns before the linker produces a confusing
+`UndefinedSymbolError`.
+
+### Four other things that had to be fixed
+- **Patcherex2 hardcodes `clang-15`**, which Ubuntu 26.04 does not package. It
+  takes a `clang_version` argument; we pass 21 and installed `lld-21`.
+- **gcc and clang disagree on `bool`.** gcc 15 defaults to C23 where `bool` is
+  built in; clang 21 defaults to C17 where it is not. Phase 4 validated with gcc
+  and Phase 5 compiles with clang, so `format_string` passed Phase 4 and failed
+  Phase 5 with `unknown type name 'bool'`. Both preludes now include `stdbool.h`.
+- **Patcherex2 swallows compiler errors** — it runs the compiler with
+  `capture_output` and lets a bare `CalledProcessError` escape, so the actual
+  diagnostic is invisible. We now catch it and surface the message.
+- **Signal deaths are negative in Python.** `subprocess` reports a crash as a
+  NEGATIVE returncode (-11 for SIGSEGV) where a shell reports 128+signal.
+  Checking only `>= 128` read every real crash as a clean exit, which briefly
+  made three working patches all look like failures.
+
 ## Phase 4 — WRITE a fix  🟢 ACCEPTANCE MET (both routes work)
 
 ```
