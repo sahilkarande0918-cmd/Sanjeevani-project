@@ -1,0 +1,24 @@
+# Sanjeevani patch template: unbounded copy into a fixed-size buffer.
+#
+# Fields are simple key: value. Multi-line values are not needed, which keeps
+# the parser to a few lines - the templates are DATA, not code.
+
+name: unbounded strcpy
+cwe: CWE-121 stack buffer overflow
+
+# Does the decompiled C look like this bug?
+detect: \bstrcpy\s*\(
+
+# What to rewrite. Groups are the destination and source.
+find: strcpy\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)
+replace: strncpy(\1, \2, sizeof(\1) - 1); \1[sizeof(\1) - 1] = '\0'
+
+explain: strcpy copies until it meets a NUL byte and has no idea how large the
+ destination is. strncpy takes a maximum. sizeof(dst) - 1 leaves room for the
+ terminator, which strncpy does NOT add when it truncates, hence the explicit
+ assignment.
+
+# Honest note carried into the patch report. This is a real trade-off, not a
+# detail to hide: the proof step will flag it on inputs the original survived.
+caveat: this truncates inputs longer than the buffer. The original copied them
+ whole (overflowing), so behaviour genuinely differs on long inputs.

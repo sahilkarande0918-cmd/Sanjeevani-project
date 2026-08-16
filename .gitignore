@@ -20,3 +20,4 @@ models/
 proofs/
 scripts/_*.sh
 tools/
+patches/

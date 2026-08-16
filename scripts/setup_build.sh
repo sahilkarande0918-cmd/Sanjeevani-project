@@ -21,13 +21,18 @@ echo "afl-qemu-trace:  $(ls tools/AFLplusplus/afl-qemu-trace 2>/dev/null || echo
 
 echo
 echo "=== 2/2  llama.cpp (CPU inference engine for the Qwen model) ==="
-if [ -x tools/llama.cpp/build/bin/llama-cli ]; then
+# Build llama-completion, NOT llama-cli. In current llama.cpp, llama-cli is
+# built around chat/server flows: headless it loads the 4.5 GB model, blocks in
+# accept() waiting for a connection that never comes, and prints nothing at all
+# on stdout or stderr. It looks exactly like a hang. llama-completion is the
+# plain prompt-in/tokens-out tool we actually want.
+if [ -x tools/llama.cpp/build/bin/llama-completion ]; then
   echo "already built, skipping"
 else
   [ -d tools/llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp tools/llama.cpp
   cd tools/llama.cpp || exit 1
   cmake -B build -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release > /dev/null
-  cmake --build build -j"$J" --target llama-cli 2>&1 | tail -15
+  cmake --build build -j"$J" --target llama-completion 2>&1 | tail -15
   cd /home/sahil/Sanjeevani || exit 1
 fi
-echo "llama-cli:       $(ls tools/llama.cpp/build/bin/llama-cli 2>/dev/null || echo MISSING)"
+echo "llama-completion: $(ls tools/llama.cpp/build/bin/llama-completion 2>/dev/null || echo MISSING)"

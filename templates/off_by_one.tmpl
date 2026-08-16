@@ -1,0 +1,19 @@
+# Sanjeevani patch template: loop runs one iteration too many.
+
+name: off-by-one loop bound
+cwe: CWE-193 off-by-one error
+
+# A for-loop whose continuation test is <= against a limit. In decompiled C
+# Ghidra renders these as local_XX names, so match generic identifiers.
+detect: for\s*\([^;]*;\s*\w+\s*<=\s*\w+\s*;
+
+find: (for\s*\([^;]*;\s*\w+\s*)<=(\s*\w+\s*;)
+replace: \1<\2
+
+explain: an array of N elements has valid indices 0 to N-1. A loop written with
+ i <= N runs N+1 times and writes one element past the end. Changing <= to <
+ is the whole fix.
+
+caveat: only correct when the bound is the element COUNT. If the bound is
+ already the last valid index, <= was right and this would drop the final
+ element - which the equivalence proof would catch.

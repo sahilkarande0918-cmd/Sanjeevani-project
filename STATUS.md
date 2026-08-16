@@ -1,5 +1,50 @@
 # STATUS
 
+## Phase 4 — WRITE a fix  🟢 ACCEPTANCE MET (both routes work)
+
+```
+REPORT                       ROUTE      BUG                    COMPILES
+format_string_23809ff9b0e7   template   format string          True
+off_by_one_f4807ab3c77d      template   off-by-one loop bound  True
+stack_overflow_422beea3822a  template   unbounded strcpy       True
+```
+Model route verified separately: Qwen produced a **correct compiling fix on
+attempt 1** for stack_overflow, matching the hand-written ground truth exactly —
+`strncpy` with `sizeof - 1` plus the explicit terminator. Took 63 s.
+
+### Templates run FIRST, and that is deliberate
+The obvious ordering is model-first with templates as the fallback. Measured
+reality argues the other way: a 7B model on this CPU generates ~3 tokens/second,
+so each attempt costs ~60 s and can still be wrong. A matching template is
+correct every time and takes a millisecond. With a 3-minute budget per binary,
+templates-first is what makes the demo reliable. The model earns its place on
+anything no template covers. Both routes are checked by Phase 2 regardless —
+neither is trusted.
+
+### llama.cpp: solved, and the cause was not what it looked like
+Six attempts. The binary was never broken and never slow. **`llama-cli` in this
+build is chat/server-oriented**: headless it loads the 4.5 GB model, blocks in
+`accept()` waiting for an HTTP connection that never arrives, and prints nothing
+on stdout *or* stderr — indistinguishable from a hang. The giveaway was a thread
+sitting in `inet_csk_accept`. The fix is a different binary: **`llama-completion`**,
+plain prompt-in/tokens-out, 9 s end to end.
+
+Two other real problems were found and fixed along the way, either of which alone
+would have looked like the same "hang":
+- default context is the model's full 32768 tokens, ballooning the process to
+  ~14 GB on a 15 GB box until it thrashed swap (`-c 512`/`-c 2048` fixes it)
+- **zombie llama processes from earlier attempts were never reaped**, so two
+  runs each holding 7.7 GB were starving each other
+
+Measured speed, replacing the plan's estimate: **24.5 tok/s prompt eval,
+1.5–2.9 tok/s generation**, ~12 s model load.
+
+### Decompiled C does not compile as-is
+Ghidra emits pseudo-types for values whose real type it could not recover —
+`undefined8`, `uint`, `byte`. They are not C. `off_by_one` applied its fix
+correctly and still failed to build until a typedef prelude was added. That
+prelude is what turns "readable C-like text" into something gcc accepts.
+
 ## Phase 3 — FIND + LOCALISE  🟢 ACCEPTANCE MET
 
 ```

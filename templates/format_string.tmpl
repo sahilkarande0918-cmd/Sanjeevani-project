@@ -1,0 +1,21 @@
+# Sanjeevani patch template: user input used as a printf format string.
+
+name: format string
+cwe: CWE-134 externally controlled format string
+
+# printf called with a bare variable as its ONLY argument. A literal format
+# string like printf("hi %s\n", x) is fine and must not match, so require the
+# argument to be an identifier rather than a quoted string.
+detect: \bprintf\s*\(\s*\w+\s*\)
+
+find: printf\s*\(\s*(\w+)\s*\)
+replace: printf("%s", \1)
+
+explain: printf treats its first argument as a format string. If that string
+ came from the user, "%s" makes it read pointers that were never passed and
+ "%n" makes it WRITE to one. Passing the text as an ARGUMENT instead means it
+ is printed literally, so "%n" is just two harmless characters.
+
+caveat: none worth noting. This fix preserves output exactly for any input
+ containing no format specifiers, and for inputs that do contain them the
+ original behaviour was undefined anyway.

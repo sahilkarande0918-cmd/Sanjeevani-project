@@ -1,45 +1,37 @@
 #!/bin/bash
-# Smoke test: does the Qwen model run offline on CPU, and is it fast enough?
+# Smoke test: does the Qwen model run offline on CPU, and how fast?
 #
-# Two things are being checked. First that it loads and answers at all, with
-# no network. Second - the real question - how many tokens per second we get,
-# because Phase 4 has to produce a patch inside the 3-minute budget. Risk R6
-# in PLAN.md estimated 5-15 tok/s; this replaces the estimate with a number.
+# Uses llama-completion, NOT llama-cli. That distinction cost us hours:
+# llama-cli in this build loads the model, blocks in accept() waiting for an
+# HTTP connection, and prints nothing to stdout OR stderr. It is
+# indistinguishable from a hang. llama-completion is the plain
+# prompt-in/tokens-out tool.
+#
+# -c 512 is also load-bearing: left at its default llama.cpp sizes the KV cache
+# for the model's full 32768-token context and the process balloons to ~14 GB
+# on a 15 GB box, then thrashes swap instead of computing.
 set -u
 cd /home/sahil/Sanjeevani || exit 1
 
-LLAMA=tools/llama.cpp/build/bin/llama-cli
+LLAMA=tools/llama.cpp/build/bin/llama-completion
 MODEL="$HOME/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
 
-[ -x "$LLAMA" ]  || { echo "MISSING $LLAMA - run scripts/setup_build.sh"; exit 1; }
-[ -f "$MODEL" ]  || { echo "MISSING $MODEL - run: make model"; exit 1; }
+[ -x "$LLAMA" ] || { echo "MISSING $LLAMA - run scripts/setup_build.sh"; exit 1; }
+[ -f "$MODEL" ] || { echo "MISSING $MODEL - run: make model"; exit 1; }
 echo "model: $(du -h "$MODEL" | cut -f1)"
 
-# A miniature of the real Phase 4 job: show it a bug, ask for the fix.
-read -r -d '' PROMPT <<'EOF'
-Fix the buffer overflow in this C function. Reply with the corrected line only.
-
-void greet(const char *name) {
-    char buf[8];
-    strcpy(buf, name);
-    printf("hi %s\n", buf);
-}
-EOF
-
-# -c 2048 is load-bearing, not a tuning knob. Left at its default, llama.cpp
-# sizes the KV cache for the model's full 32768-token context and the process
-# balloons to ~14 GB RSS on a 15 GB box - it then thrashes swap at 26% CPU and
-# never finishes. Our prompts are a decompiled function, a few hundred tokens.
-# 2048 is generous for that and keeps the whole thing near the model's own size.
-echo "--- generating (first run loads 4.5 GB from disk, so it is the slow one) ---"
 t0=$(date +%s)
-"$LLAMA" -m "$MODEL" -p "$PROMPT" -n 64 -c 2048 -t "$(nproc)" \
-         -no-cnv --temp 0 --no-warmup 2>/tmp/llama.err
+out=$(timeout 300 "$LLAMA" -m "$MODEL" -n 48 -c 512 -t "$(nproc)" --temp 0 \
+        -p 'Fix this C bug. Reply with only the corrected line: strcpy(buf, name);' \
+        </dev/null 2>/tmp/llama_smoke.err)
 rc=$?
 t1=$(date +%s)
 
-echo
+echo "--- model said ---"
+echo "$out" | head -12
 echo "--- speed ---"
-grep -E 'eval time|tokens per second|load time' /tmp/llama.err | head -5
-echo "wall clock: $((t1-t0))s, exit=$rc"
-[ "$rc" = 0 ] && echo "OK: model runs offline on CPU" || { echo "FAILED"; tail -20 /tmp/llama.err; exit 1; }
+grep -E 'prompt eval time|eval time|load time' /tmp/llama_smoke.err | head -4
+echo "wall $((t1-t0))s, exit=$rc"
+
+[ "$rc" = 0 ] && [ -n "$out" ] && echo "OK: model runs offline on CPU" \
+  || { echo "FAILED (exit $rc)"; tail -15 /tmp/llama_smoke.err; exit 1; }
