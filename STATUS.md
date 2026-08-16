@@ -1,5 +1,17 @@
 # STATUS
 
+## 🛑 GATE: DO NOT START PHASE 2
+
+Sahil said on 2026-08-16: **"wait till I say go to phase 2."**
+Finish Phase 1 only. Do not create `prover/`, do not write `differential_se.py`,
+do not begin differential symbolic execution. Wait for an explicit "go".
+
+Phase 1 leftovers that ARE still allowed: verifying the background downloads and
+builds, writing the Ghidra / AFL++ / llama.cpp smoke tests, and adding the
+`make setup` and `make model` targets.
+
+---
+
 ## Phase 1 — Setup + test corpus  🟢 mostly done, 2 background jobs running
 
 ### Done ✓
@@ -18,9 +30,20 @@
   at `0x401193` by reading the address `_start` passes to `__libc_start_main`,
   builds a 29-function CFG in <0.1 s, and executes symbolically in 1.1 s
 
+- **Ghidra 12.1.2 installed**, `smoke_ghidra.sh` passes — headless analysis of a
+  stripped ELF in **8 seconds** (I had budgeted 30–90 s; risk R7 is much smaller)
+- **AFL++ 5.03a built from source**, `smoke_afl.sh` passes — `afl-qemu-trace` runs the
+  stripped binary, prints correctly on benign input, and reports exit 139 on the
+  crashing one. `core_pattern` is already `core`, so Phase 3 will not need root.
+- **llama.cpp built** (`tools/llama.cpp/build/bin/llama-cli`)
+- `make setup` / `make model` / `make smoke` / `make deps` targets added
+
 ### Running in background ⏳
-- `setup_downloads.sh` — Ghidra 12.1.2 (573 MB) + Qwen Q4_K_M (~4.7 GB), checksum-verified
-- `setup_build.sh` — AFL++ from source (no 26.04 package) + llama.cpp
+- `fetch_model.sh` — Qwen Q4_K_M (~4.7 GB). First attempt died at
+  `curl: (56) Connection reset by peer`; `--retry` restarts the *request* but not the
+  *file*, so a reset meant starting from zero. Rewritten with `-C -` so each retry
+  resumes from the bytes already on disk. Verifies against the SHA-256 Hugging Face
+  publishes: `509287f7…94d3c`.
 
 ### Fixed along the way
 - **off_by_one.c did not crash and had to be redesigned.** Flagged as the shaky one

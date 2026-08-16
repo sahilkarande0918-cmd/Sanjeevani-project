@@ -19,7 +19,26 @@ NAMES   := stack_overflow off_by_one format_string
 BROKEN  := $(addprefix $(OUT)/,$(addsuffix .broken,$(NAMES)))
 FIXED   := $(addprefix $(OUT)/,$(addsuffix .fixed,$(NAMES)))
 
-.PHONY: corpus verify-corpus clean
+.PHONY: corpus verify-corpus clean setup model smoke deps
+
+# One-time setup. `deps` is the only part needing root and is run separately.
+setup:
+	bash scripts/setup_python.sh
+	bash scripts/setup_build.sh
+	bash scripts/setup_downloads.sh
+
+# Root-only step, kept separate so `make setup` never needs sudo.
+deps:
+	@echo "This step needs root. Run it yourself:"
+	@echo "  sudo bash scripts/install_deps.sh"
+
+model:
+	bash scripts/fetch_model.sh
+
+smoke:
+	@for s in scripts/smoke_*.sh; do \
+	  echo "=== $$s ==="; bash $$s || exit 1; echo; \
+	done
 
 corpus: $(BROKEN) $(FIXED)
 	@echo "corpus built -> $(OUT)/"

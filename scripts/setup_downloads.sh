@@ -25,34 +25,9 @@ fi
 
 echo
 echo "=== 2/2  Qwen2.5-Coder-7B Q4_K_M (~4.7 GB) ==="
-if [ -f "$MODEL_DST" ]; then
-  echo "already present, skipping"
-else
-  # Hugging Face stores the file's real SHA-256 as the LFS object id.
-  # Fetch it FIRST so we can prove the download arrived intact.
-  echo "fetching expected checksum..."
-  EXPECTED=$(curl -sL "https://huggingface.co/api/models/$MODEL_REPO/tree/main?recursive=1" \
-    | .venv/bin/python -c "
-import json,sys
-for e in json.load(sys.stdin):
-    if e.get('path')=='$MODEL_FILE':
-        print((e.get('lfs') or {}).get('oid',''))
-        break
-")
-  echo "expected sha256: ${EXPECTED:-<unavailable>}"
-
-  curl -L --fail --retry 3 -o "$MODEL_DST" \
-       "https://huggingface.co/$MODEL_REPO/resolve/main/$MODEL_FILE" \
-       -w 'downloaded %{size_download} bytes in %{time_total}s\n' || { echo "MODEL DOWNLOAD FAILED"; exit 1; }
-
-  ACTUAL=$(sha256sum "$MODEL_DST" | cut -d' ' -f1)
-  echo "actual   sha256: $ACTUAL"
-  if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-    echo "CHECKSUM MISMATCH - deleting corrupt download"
-    rm -f "$MODEL_DST"; exit 1
-  fi
-  echo "checksum OK"
-fi
+# Delegated: a download this size needs resume-on-failure, which is fiddly
+# enough to deserve its own script.
+bash scripts/fetch_model.sh || exit 1
 
 echo
 echo "=== disk used ==="
