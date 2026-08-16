@@ -1,13 +1,27 @@
 # STATUS
 
-## Phase 2 — PROVE  🟡 1 of 3 green (need 2 of 3)
+## Phase 2 — PROVE  🟢 ACCEPTANCE MET (2 of 3 green, negative tests pass)
 
 ```
-BINARY           VERDICT      SAFETY           EQUIVALENCE    ADDRESS
-stack_overflow   PROVEN       BUG_REMOVED      IDENTICAL      0x401190
-off_by_one       REJECTED     NO_BUG_FOUND     DIFFERENT      -
-format_string    INCONCLUSIVE NO_BUG_FOUND     INCONCLUSIVE   -
+BINARY               VERDICT      SAFETY           EQUIVALENCE    ADDRESS
+stack_overflow       PROVEN       BUG_REMOVED      IDENTICAL      0x401190
+off_by_one           PROVEN       BUG_REMOVED      IDENTICAL      0x401228
+format_string        INCONCLUSIVE NO_BUG_FOUND     IDENTICAL      -
+
+negative tests (must NOT be PROVEN)
+stack_overflow.wrong REJECTED     BUG_REMOVED      DIFFERENT      caught
+off_by_one.wrong     REJECTED     STILL_VULNERABLE IDENTICAL      caught
 ```
+
+**The negative tests prove why the verdict needs both halves.** Each bad patch is
+caught by exactly the half the other one would have missed:
+- `stack_overflow.wrong` genuinely fixes the memory bug but changes the greeting
+  from "hi" to "hello". Safety says BUG_REMOVED. Only **equivalence** catches it.
+  A fuzzer would run for a week and call it clean.
+- `off_by_one.wrong` adds a reassuring-looking bounds check but leaves `<=` intact.
+  Behaviour is identical, so equivalence is happy. Only **safety** catches it.
+
+Either half alone certifies one of these bad patches as good.
 
 `prover/differential_se.py` works end to end on `stack_overflow` and prints the
 green panel: **PROVEN EQUIVALENT EXCEPT AT ADDRESS 0x401190**.
@@ -48,26 +62,41 @@ truncates to 7. The original did not crash on that input — it overflowed by on
 byte into padding and survived — so the standard bounds-check fix **silently
 truncates data on an input the original handled**. No fuzzer would ever find that.
 
+### Two more prover bugs found and fixed (6 total)
+5. **`strcspn` had no model, and silence made it dangerous.** With
+   `auto_load_libs=False`, any library function angr cannot model is replaced by a
+   stub returning a **completely unconstrained value**. `strcspn` hit that stub, so
+   the solver was free to decide a 4-byte input had length 24 — enough to run the
+   loop far enough to corrupt a pointer and "prove" a difference no real execution
+   can produce. An unmodelled function does not fail loudly; it quietly makes the
+   proof meaningless. Fixed with a real `SimStrcspn`, plus the verdict now **lists
+   unmodelled functions** so this can never be silent again.
+6. **`NO_BUG_FOUND` was passing as PROVEN** — the same vacuous trap as bug #1. We
+   would have certified a bug removed without ever having seen the bug. PROVEN now
+   requires safety to demonstrate the bug *and* equivalence to prove preservation.
+
+### Why safety needed its own detector
+Waiting for angr to crash is not good enough: it happily reads through a corrupted
+pointer and invents data, so `puts(tail)` after `tail` was overwritten looked
+harmless and the bug vanished from the analysis. Safety now asks the question
+directly — on every memory access, if the address depends on the input **and** Z3
+can steer it into the unmapped null page, an attacker controls where the program
+reads or writes. That is a violation whether or not this run happens to fault.
+(`STRICT_PAGE_ACCESS` was tried first and rejected: it flags ordinary stack access,
+reporting *both* binaries as crashing inside angr's own simulated stack.)
+
 ### Open ✗
-- **off_by_one — SAFETY: NO_BUG_FOUND.** The real binary segfaults on ≥24 chars via
-  `puts()` on a pointer overwritten with input. angr's default memory model does
-  not fault on that; it invents symbolic data instead. Needs a detector for
-  "dereferencing an attacker-controlled pointer".
-- **off_by_one — EQUIVALENCE: DIFFERENT**, output lengths 8 vs 32 bits (1 byte vs
-  4). Not yet root-caused. Both should print `end\n`. Do not assume it is an
-  artifact — bug #2 also looked like one and was real.
-- **format_string — INCONCLUSIVE.** The original has no normal exit even at 2
-  bytes. Suspected root cause: angr cannot execute `printf` with a *symbolic
-  format string*, which is precisely what this bug is. May be genuinely out of
-  reach for symbolic execution, in which case this is the one that falls back to
-  `differential_fuzz.py` (bounded verification) — the plan's kill switch, and the
-  Definition of Done only requires 2 of 3 green.
+- **format_string — INCONCLUSIVE.** Equivalence proves IDENTICAL, but safety finds
+  no bug: angr's `printf` model does not emulate `%n` writes or `%s` dereferences,
+  which is precisely what this bug is. Likely genuinely out of reach for symbolic
+  execution. This is the one that takes the plan's documented kill switch —
+  `differential_fuzz.py`, labelled "bounded verification", not "proof". The
+  Definition of Done requires 2 of 3 green, which is met without it.
 
 ### Next →
-1. Root-cause the off_by_one equivalence length mismatch
-2. Detect corrupted-pointer dereference for off_by_one safety
-3. Decide format_string: symbolic-format workaround, or the fuzzing fallback
-4. Negative tests — deliberately wrong patches must come out RED
+1. **Phase 3 — FIND** (AFL++ QEMU mode + Ghidra localisation)
+2. `differential_fuzz.py` fallback for format_string
+3. llama.cpp still unverified — see below
 
 ## Phase 1 — Setup + test corpus  🟢 mostly done, 2 background jobs running
 

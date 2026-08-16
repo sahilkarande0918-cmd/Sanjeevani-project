@@ -80,6 +80,92 @@ def find_main(proj: "angr.Project") -> int:
     raise RuntimeError(f"could not locate main in {proj.filename}")
 
 
+class SimStrcspn(angr.SimProcedure):
+    """A model for strcspn(), which angr does not ship.
+
+    This mattered enormously. With auto_load_libs=False, any library function
+    angr has no model for is replaced by a stub returning a completely
+    UNCONSTRAINED value - it can be anything at all. strcspn hit that stub, so
+    the solver was free to decide a 4-byte input had length 24, which let a
+    loop run far enough to corrupt a pointer and "prove" a difference that no
+    real execution could produce.
+
+    An unmodelled function does not fail loudly. It quietly makes the proof
+    meaningless, which is worse.
+    """
+    MAXLEN = 72        # our corpus reads into char[64]
+
+    def run(self, s, reject):  # noqa: D102
+        # The reject set is a short literal in every realistic call.
+        rejects = []
+        for i in range(8):
+            ch = self.state.memory.load(reject + i, 1)
+            if self.state.solver.symbolic(ch):
+                break
+            v = self.state.solver.eval(ch)
+            if v == 0:
+                break
+            rejects.append(v)
+
+        bits = self.state.arch.bits
+        # Built back-to-front so the earliest match wins.
+        result = claripy.BVV(self.MAXLEN, bits)
+        for i in reversed(range(self.MAXLEN)):
+            ch = self.state.memory.load(s + i, 1)
+            stop = claripy.Or(ch == 0, *[ch == r for r in rejects]) if rejects else (ch == 0)
+            result = claripy.If(stop, claripy.BVV(i, bits), result)
+        return result
+
+
+#: Functions we model ourselves because angr does not.
+EXTRA_PROCEDURES = {"strcspn": SimStrcspn}
+
+#: Anything below this is the unmapped null page on Linux.
+NULL_PAGE = 0x1000
+
+
+def _wild_pointer_watch(state):
+    """Flag a memory access whose address the INPUT can steer somewhere invalid.
+
+    Waiting for angr to crash is not good enough. angr happily reads from a
+    corrupted pointer and invents data, so `puts(tail)` after tail was
+    overwritten with input bytes looked completely harmless - the bug vanished
+    from the analysis instead of being reported.
+
+    So we ask the question directly. On every memory access, if the address
+    depends on the input AND the solver can make it land in the unmapped null
+    page, then an attacker controls where this program reads or writes. That
+    is a memory-safety violation whether or not this particular run faults.
+    """
+    addr = (state.inspect.mem_read_address
+            if state.inspect.mem_read_address is not None
+            else state.inspect.mem_write_address)
+    if addr is None or not state.solver.symbolic(addr):
+        return
+    try:
+        if state.solver.satisfiable(extra_constraints=[addr < NULL_PAGE]):
+            state.globals["wild_pointer"] = True
+    except Exception:
+        # A solver hiccup must never be silently read as "safe".
+        state.globals["wild_pointer"] = True
+
+
+def unmodelled_functions(proj) -> list[str]:
+    """Imported functions angr has no model for.
+
+    Every one of these returns an unconstrained value, so every one is a hole
+    in the proof. They get reported in the verdict rather than ignored.
+    """
+    bad = set()
+    for addr, proc in getattr(proj, "_sim_procedures", {}).items():
+        if "ReturnUnconstrained" not in type(proc).__name__:
+            continue
+        # angr records which symbol the stub stands in for.
+        name = (getattr(proc, "kwargs", {}) or {}).get("resolves")
+        bad.add(str(name or hex(addr)))
+    return sorted(bad)
+
+
 def stdout_ast(state):
     """The formula for what the program printed, in terms of the input.
 
@@ -101,6 +187,8 @@ class Exploration:
     deadended: list = field(default_factory=list)
     unconstrained: list = field(default_factory=list)
     crash_states: list = field(default_factory=list)   # touched unmapped memory
+    wild_pointer_states: list = field(default_factory=list)  # input steers an address
+    unmodelled: list = field(default_factory=list)     # holes in the proof
     errored: int = 0          # angr genuinely could not continue
     steps: int = 0
     seconds: float = 0.0
@@ -114,14 +202,16 @@ class Exploration:
         jump. 'crashed' means it jumped somewhere unmapped - typically address
         0, because the overflow wrote zeros over the return address.
         """
-        return len(self.unconstrained) + len(self.crash_states)
+        return len(self.unconstrained) + len(self.crash_states) + len(self.wild_pointer_states)
 
     def summary(self) -> dict:
         return {"normal_exits": len(self.deadended),
                 "hijacked": len(self.unconstrained),
                 "crashed": len(self.crash_states),
+                "wild_pointer": len(self.wild_pointer_states),
                 "lost_control": self.lost_control,
                 "errored": self.errored,
+                "unmodelled_functions": self.unmodelled,
                 "steps": self.steps,
                 "seconds": round(self.seconds, 2),
                 "timed_out": self.timed_out}
@@ -165,9 +255,21 @@ def explore(path: str, inp, timeout: float, max_states: int,
     anything the program did wrong.
     """
     proj = angr.Project(path, auto_load_libs=False)
+    for fname, procedure in EXTRA_PROCEDURES.items():
+        proj.hook_symbol(fname, procedure())
     main = find_main(proj)
 
-    stdin = angr.SimFileStream(name="stdin", content=inp, has_end=True)
+    # Model the input as a LINE, not a bare blob: symbolic bytes followed by a
+    # real newline. Every program in the corpus reads with fgets, so this is
+    # what they actually receive.
+    #
+    # It is also load-bearing for correctness. Without the newline, angr's
+    # strcspn returns an unconstrained length, so it explores input lengths
+    # that cannot physically occur - with only 4 symbolic bytes it still
+    # considered a 24-character string and "found" a difference that no real
+    # execution can produce. Terminating the line pins the length down.
+    content = claripy.Concat(inp, claripy.BVV(b"\n"))
+    stdin = angr.SimFileStream(name="stdin", content=content, has_end=True)
 
     # Both binaries must start from the SAME known machine state, or the
     # comparison is meaningless. By default angr invents a fresh unknown value
@@ -188,9 +290,17 @@ def explore(path: str, inp, timeout: float, max_states: int,
     else:
         opts = set()
     state = proj.factory.call_state(main, stdin=stdin, add_options=opts)
+
+    # Only in safety mode: zero-filling would concretise these addresses and
+    # hide exactly what we are looking for.
+    if mode == "safety":
+        state.inspect.b("mem_read", when=angr.BP_BEFORE, action=_wild_pointer_watch)
+        state.inspect.b("mem_write", when=angr.BP_BEFORE, action=_wild_pointer_watch)
+
     simgr = proj.factory.simulation_manager(state, save_unconstrained=True)
 
     exp = Exploration(path=path, main=main)
+    exp.unmodelled = unmodelled_functions(proj)
     t0 = time.time()
     while simgr.active:
         if time.time() - t0 > timeout or len(simgr.active) > max_states:
@@ -203,6 +313,10 @@ def explore(path: str, inp, timeout: float, max_states: int,
     exp.deadended = list(simgr.deadended)
     exp.unconstrained = list(getattr(simgr, "unconstrained", []))
     exp.crash_states, exp.errored = _classify_errors(simgr)
+    exp.wild_pointer_states = [
+        s for s in (list(simgr.deadended) + list(simgr.unconstrained))
+        if s.globals.get("wild_pointer")
+    ]
     return exp
 
 
@@ -213,7 +327,7 @@ def crash_address(exp: Exploration) -> int | None:
     pointer; a crashed path ran into unmapped memory. Either way the address we
     want is the last basic block that actually belonged to the program.
     """
-    for st in list(exp.unconstrained) + list(exp.crash_states):
+    for st in list(exp.unconstrained) + list(exp.crash_states) + list(exp.wild_pointer_states):
         hist = list(st.history.bbl_addrs)
         if hist:
             return hist[-1]
@@ -321,12 +435,17 @@ def prove(original: str, patched: str, eq_bytes: int, safety_bytes: int,
     eq = check_equivalence(original, patched, eq_bytes, timeout, max_states)
     safety = check_safety(original, patched, safety_bytes, timeout, max_states)
 
-    if eq["result"] == "DIFFERENT":
+    # PROVEN requires BOTH halves to have actually done their job.
+    #
+    # NO_BUG_FOUND used to fall through to PROVEN, which is the same vacuous
+    # trap as "all 0 paths matched": we would be certifying that a bug was
+    # removed without ever having seen the bug. If the safety check could not
+    # demonstrate the original losing control, the honest answer is that the
+    # bound was too small - not that the patch is proved.
+    if eq["result"] == "DIFFERENT" or safety["result"] == "STILL_VULNERABLE":
         verdict = "REJECTED"
-    elif eq["result"] == "INCONCLUSIVE":
+    elif eq["result"] == "INCONCLUSIVE" or safety["result"] == "NO_BUG_FOUND":
         verdict = "INCONCLUSIVE"
-    elif safety["result"] == "STILL_VULNERABLE":
-        verdict = "REJECTED"
     else:
         verdict = "PROVEN"
 
@@ -365,13 +484,14 @@ def banner(res: dict) -> str:
                  f"behaviour preserved  ({res['equivalence']['paths_compared']} path(s), "
                  f"{res['equivalence']['symbolic_input_bytes']} symbolic bytes)"]
         colour = GREEN
-    elif v == "REJECTED":
-        lines = ["PATCH REJECTED", res["equivalence"].get("why", "")]
-        colour = RED
     else:
-        lines = ["INCONCLUSIVE - NOT PROVED",
-                 res["equivalence"].get("why", "")]
-        colour = YELLOW
+        # Report whichever half actually failed, not always the same one.
+        eq, sf = res["equivalence"], res["safety"]
+        blame = (eq if eq["result"] in ("DIFFERENT", "INCONCLUSIVE") else sf)
+        if v == "REJECTED":
+            lines, colour = ["PATCH REJECTED", blame.get("why", "")], RED
+        else:
+            lines, colour = ["INCONCLUSIVE - NOT PROVED", blame.get("why", "")], YELLOW
 
     width = max(len(x) for x in lines) + 4
     bar = "=" * width

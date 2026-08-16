@@ -16,8 +16,11 @@ CFLAGS  := -O0 -no-pie -fno-stack-protector -U_FORTIFY_SOURCE -fcf-protection=no
 OUT     := corpus/out
 NAMES   := stack_overflow off_by_one format_string
 
+WRONG_NAMES := stack_overflow off_by_one
+
 BROKEN  := $(addprefix $(OUT)/,$(addsuffix .broken,$(NAMES)))
 FIXED   := $(addprefix $(OUT)/,$(addsuffix .fixed,$(NAMES)))
+WRONG   := $(addprefix $(OUT)/,$(addsuffix .wrong,$(WRONG_NAMES)))
 
 .PHONY: corpus verify-corpus clean setup model smoke deps
 
@@ -40,8 +43,12 @@ smoke:
 	  echo "=== $$s ==="; bash $$s || exit 1; echo; \
 	done
 
-corpus: $(BROKEN) $(FIXED)
+corpus: $(BROKEN) $(FIXED) $(WRONG)
 	@echo "corpus built -> $(OUT)/"
+
+$(OUT)/%.wrong: corpus/wrong/%.c | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $<
+	strip $@
 
 $(OUT)/%.broken: corpus/%.c | $(OUT)
 	$(CC) $(CFLAGS) -o $@ $<
