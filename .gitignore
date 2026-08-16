@@ -22,3 +22,5 @@ scripts/_*.sh
 tools/
 patches/
 spliced/
+crashes/_current.json
+patches/_current.json

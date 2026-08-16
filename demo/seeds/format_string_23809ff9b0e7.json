@@ -1,0 +1,37 @@
+{
+  "binary": "/home/sahil/Sanjeevani/corpus/out/format_string.broken",
+  "binary_sha256": "c3711ed09b517a6982380eb57e2623089a1e71e1189484bfdf848cd0ec5c0bee",
+  "crash_found": true,
+  "fuzz_seconds": 6.16,
+  "executions": 7543,
+  "crash_input_b64": "JXNzj4+PgBBzgA==",
+  "crash_input_len": 10,
+  "localisation": {
+    "faulting_address": "0x7ffff7daab5c",
+    "in_our_code": false,
+    "blamed_address": "0x4011ae",
+    "blamed_from": "caller",
+    "image_range": [
+      "0x400000",
+      "0x404040"
+    ],
+    "frames": [
+      "0x7ffff7c6fbc8",
+      "0x7ffff7c709e8",
+      "0x7ffff7c643b3",
+      "0x4011ae",
+      "0x7ffff7c2a601",
+      "0x7ffff7c2a718",
+      "0x401095"
+    ]
+  },
+  "function": {
+    "found": true,
+    "address": "004011ae",
+    "function": "FUN_00401156",
+    "entry": "00401156",
+    "size": 105,
+    "decompiled": "\nbool FUN_00401156(void)\n\n{\n  char *pcVar1;\n  size_t sVar2;\n  char local_48 [64];\n  \n  pcVar1 = fgets(local_48,0x40,stdin);\n  if (pcVar1 != (char *)0x0) {\n    sVar2 = strcspn(local_48,\"\\n\");\n    local_48[sVar2] = '\\0';\n    printf(local_48);\n    putchar(10);\n  }\n  return pcVar1 == (char *)0x0;\n}\n\n",
+    "callees": []
+  }
+}

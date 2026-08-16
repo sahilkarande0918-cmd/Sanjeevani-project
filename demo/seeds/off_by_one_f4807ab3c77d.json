@@ -1,0 +1,35 @@
+{
+  "binary": "/home/sahil/Sanjeevani/corpus/out/off_by_one.broken",
+  "binary_sha256": "be55956680d755567d10d5fdc99a31ce2cb3389501bd4fcfaeaf396ad3b92796",
+  "crash_found": true,
+  "fuzz_seconds": 0.27,
+  "executions": 14,
+  "crash_input_b64": "aWlpaWlpaWtpaWlpaWlpaWlpaWlpaWlpaWlpaWlpCg==",
+  "crash_input_len": 31,
+  "localisation": {
+    "faulting_address": "0x7ffff7daab5c",
+    "in_our_code": false,
+    "blamed_address": "0x401228",
+    "blamed_from": "caller",
+    "image_range": [
+      "0x400000",
+      "0x404040"
+    ],
+    "frames": [
+      "0x7ffff7c8eafb",
+      "0x401228",
+      "0x7ffff7c2a601",
+      "0x7ffff7c2a718",
+      "0x401095"
+    ]
+  },
+  "function": {
+    "found": true,
+    "address": "00401228",
+    "function": "FUN_00401156",
+    "entry": "00401156",
+    "size": 217,
+    "decompiled": "\nundefined8 FUN_00401156(void)\n\n{\n  char *pcVar1;\n  undefined8 uVar2;\n  char *local_88 [4];\n  char local_68 [72];\n  size_t local_20;\n  ulong local_18;\n  ulong local_10;\n  \n  memset(local_68,0,0x40);\n  pcVar1 = fgets(local_68,0x40,stdin);\n  if (pcVar1 == (char *)0x0) {\n    uVar2 = 1;\n  }\n  else {\n    local_20 = strcspn(local_68,\"\\n\");\n    local_10 = local_20 >> 3;\n    if (3 < local_20 >> 3) {\n      local_10 = 3;\n    }\n    local_88[3] = \"end\";\n    for (local_18 = 0; local_18 <= local_10; local_18 = local_18 + 1) {\n      local_88[local_18] = *(char **)(local_68 + local_18 * 8);\n    }\n    puts(local_88[3]);\n    uVar2 = 0;\n  }\n  return uVar2;\n}\n\n",
+    "callees": []
+  }
+}

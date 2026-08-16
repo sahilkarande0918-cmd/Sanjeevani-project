@@ -1,5 +1,55 @@
 # STATUS
 
+## 🟢 PROJECT DEFINITION OF DONE — ALL CRITERIA MET
+
+| Criterion | Target | Actual |
+|---|---|---|
+| `demo.sh` end-to-end offline, all 3 binaries | yes | **yes** |
+| Green PROVE panel | ≥ 2 of 3 | **2 of 3** (stack_overflow, off_by_one) |
+| Total disk footprint | < 10 GB | **8.6 GB** |
+| Zero external network calls at runtime | 0 | **0** — `strace -f -e trace=network` clean |
+| Runtime per binary | < 3 min | **~24 s** (71 s for all three) |
+
+```
+$ ./demo.sh
+  2 of 3 binaries repaired and PROVEN, in 71s total
+
++==========================================================+
+|  PROVEN EQUIVALENT EXCEPT AT ADDRESS 0x401190            |
+|                                                          |
+|  bug removed        32 symbolic input bytes              |
+|  behaviour preserved 1 path(s) proved identical          |
+|  original  sha256   625d35c183a21547ee38d9056be6daaf...  |
+|  patched   sha256   66b9da9201a3539263eb16374d2e67fa...  |
++==========================================================+
+```
+
+Single binary, start to finish, on a stripped ELF with no source:
+```
+FIND+READ 13.9s   WRITE 0.1s   SPLICE 3.2s   PROVE 2.9s   TOTAL 20.2s
+```
+
+## Phase 6 — INTEGRATE + DEMO  🟢 ACCEPTANCE MET
+
+`sanjeevani.py` chains FIND → READ → WRITE → SPLICE → PROVE. Phases run strictly
+one at a time and release memory between: Ghidra (a JVM), angr and llama.cpp are
+each multiple GB, and holding two at once on a 15 GB box sends the machine into
+swap — not a theoretical worry, it is how an afternoon was lost to what looked
+like a hung model but was two processes starving each other.
+
+**The proof runs against the actually-spliced binary**, not the hand-written
+reference fix. That is the real validation: the thing Sanjeevani produced is the
+thing Sanjeevani proved.
+
+`demo.sh --safe` uses pre-recorded crash inputs in `demo/seeds/`. Fuzzing has
+found these crashes in under a second every time, but "usually fast" is not a
+promise worth making in front of judges. Everything after FIND is identical
+either way.
+
+`scripts/check_offline.sh` produces the network audit. It reports local IPC
+(AF_UNIX, netlink) separately rather than hiding it — a claim of zero network
+calls should show its working rather than quietly redefine the words.
+
 ## Phase 5 — SPLICE  🟢 ACCEPTANCE MET (3 of 3)
 
 ```

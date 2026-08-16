@@ -1,0 +1,37 @@
+{
+  "binary": "/home/sahil/Sanjeevani/corpus/out/stack_overflow.broken",
+  "binary_sha256": "625d35c183a21547ee38d9056be6daaf29ed62fcc3a5c920a8657c2d6df30272",
+  "crash_found": true,
+  "fuzz_seconds": 0.31,
+  "executions": 12,
+  "crash_input_b64": "blRUVFRUA+gIGg==",
+  "crash_input_len": 10,
+  "localisation": {
+    "faulting_address": "0x4011eb",
+    "in_our_code": true,
+    "blamed_address": "0x4011eb",
+    "blamed_from": "fault",
+    "image_range": [
+      "0x400000",
+      "0x404040"
+    ],
+    "frames": [
+      "0x4011eb"
+    ]
+  },
+  "function": {
+    "found": true,
+    "address": "004011eb",
+    "function": "FUN_00401193",
+    "entry": "00401193",
+    "size": 90,
+    "decompiled": "\nbool FUN_00401193(void)\n\n{\n  char *pcVar1;\n  size_t sVar2;\n  char local_28 [32];\n  \n  pcVar1 = fgets(local_28,0x20,stdin);\n  if (pcVar1 != (char *)0x0) {\n    sVar2 = strcspn(local_28,\"\\n\");\n    local_28[sVar2] = '\\0';\n    FUN_00401156(local_28);\n  }\n  return pcVar1 == (char *)0x0;\n}\n\n",
+    "callees": [
+      {
+        "function": "FUN_00401156",
+        "entry": "00401156",
+        "decompiled": "\nvoid FUN_00401156(char *param_1)\n\n{\n  char local_10 [8];\n  \n  strcpy(local_10,param_1);\n  printf(\"hi %s\\n\",local_10);\n  return;\n}\n\n"
+      }
+    ]
+  }
+}
