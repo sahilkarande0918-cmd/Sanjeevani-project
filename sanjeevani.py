@@ -47,6 +47,25 @@ def bad(name: str, detail: str) -> None:
     print(f"{R}[{name:<6}] !!{OFF} {detail}")
 
 
+def bounded_panel(b: dict) -> str:
+    """Deliberately NOT green. This is evidence, not proof, and the panel says so."""
+    s = b["sample"]
+    lines = ["BOUNDED VERIFICATION - NOT A PROOF",
+             "",
+             f"crashes fixed        {s['crashes_fixed']}",
+             f"outputs matched      {s['both_ran_cleanly']}",
+             f"regressions          {len(b['output_mismatches'])}",
+             f"excluded (already UB) {s['excluded_undefined_behaviour']}",
+             f"inputs tried         {s['inputs_tried']}",
+             "",
+             "symbolic execution could not model this bug, so this",
+             "is a finite sample, not a statement about all inputs."]
+    width = max(len(x) for x in lines) + 6
+    top = "+" + "=" * (width - 2) + "+"
+    body = "\n".join(f"|  {x.ljust(width - 6)}  |" for x in lines)
+    return f"\n{Y}{B}{top}\n{body}\n{top}{OFF}\n"
+
+
 def panel(res: dict) -> str:
     """The demo money shot."""
     v = res["verdict"]
@@ -77,7 +96,8 @@ def panel(res: dict) -> str:
 
 
 def repair(binary: Path, fuzz_seconds: int, eq_bytes: int, safety_bytes: int,
-           use_model: bool, crash_seed: Path | None) -> dict:
+           use_model: bool, crash_seed: Path | None,
+           ub_marker: str | None = None, fuzz_inputs: int = 1000) -> dict:
     t_start = time.time()
     print(f"\n{B}Sanjeevani{OFF}  repairing {binary}\n{rule('=')}")
 
@@ -144,20 +164,48 @@ def repair(binary: Path, fuzz_seconds: int, eq_bytes: int, safety_bytes: int,
         "PROVE", f"{proof['verdict']}  safety={proof['safety']['result']}  "
                  f"equivalence={proof['equivalence']['result']}")
 
+    # ------------------------------------------------- fallback: measure it
+    # If symbolic execution could not reach a verdict, do NOT dress that up as
+    # one. Fall back to running a large sample of concrete inputs through both
+    # binaries and report exactly that, labelled as evidence rather than proof.
+    bounded = None
+    if proof["verdict"] != "PROVEN":
+        from prover.differential_fuzz import verify as fuzz_verify  # noqa: E402
+        step("FUZZ", f"{DIM}proof out of reach here - measuring instead "
+                     f"({fuzz_inputs} inputs)...{OFF}")
+        seeds = []
+        if report.get("crash_input_b64"):
+            seeds.append(base64.b64decode(report["crash_input_b64"]))
+        bounded = fuzz_verify(binary, Path(spliced["output"]), fuzz_inputs, seeds,
+                              ub_marker=ub_marker.encode() if ub_marker else None)
+        s = bounded["sample"]
+        (ok if bounded["verdict"] == "BOUNDED_VERIFICATION" else bad)(
+            "FUZZ", f"{bounded['verdict']}  {s['crashes_fixed']} crash(es) fixed, "
+                    f"{s['both_ran_cleanly']} matched, "
+                    f"{len(bounded['output_mismatches'])} regression(s)")
+
     proofs = ROOT / "proofs"
     proofs.mkdir(exist_ok=True)
-    name = "proof" if proof["verdict"] == "PROVEN" else "rejected"
+    # "rejected" and "inconclusive" are different claims and must not share a
+    # filename: rejected means we showed the patch is wrong, inconclusive means
+    # we could not tell.
+    name = {"PROVEN": "proof", "REJECTED": "rejected"}.get(
+        proof["verdict"], "inconclusive")
     dest = proofs / f"{binary.stem}.{name}.json"
     dest.write_text(json.dumps(proof, indent=2))
+    if bounded:
+        (proofs / f"{binary.stem}.bounded.json").write_text(json.dumps(bounded, indent=2))
 
     total = time.time() - t_start
     print(rule())
     print(f"{DIM}FIND+READ {t_find:5.1f}s   WRITE {t_write:5.1f}s   "
           f"SPLICE {t_splice:5.1f}s   PROVE {t_prove:5.1f}s   "
           f"TOTAL {total:5.1f}s{OFF}")
-    print(panel(proof))
-    print(f"{DIM}proof written to {dest}{OFF}")
-    return {"proof": proof, "seconds": total, "patched": spliced["output"]}
+    print(panel(proof) if proof["verdict"] == "PROVEN" or not bounded
+          else bounded_panel(bounded))
+    print(f"{DIM}written to {dest}{OFF}")
+    return {"proof": proof, "bounded": bounded, "seconds": total,
+            "patched": spliced["output"]}
 
 
 if __name__ == "__main__":
@@ -169,9 +217,19 @@ if __name__ == "__main__":
     ap.add_argument("--no-model", action="store_true",
                     help="templates only - faster and deterministic, used by demo.sh")
     ap.add_argument("--crash-seed", help="pre-recorded crash report, skips fuzzing")
+    ap.add_argument("--ub-marker", default=None,
+                    help="bytes that put the ORIGINAL into undefined behaviour "
+                         "(e.g. %% for a format-string bug), used by the fallback")
+    ap.add_argument("--fuzz-inputs", type=int, default=1000)
     args = ap.parse_args()
 
     r = repair(Path(args.binary).resolve(), args.fuzz_seconds, args.eq_bytes,
                args.safety_bytes, not args.no_model,
-               Path(args.crash_seed) if args.crash_seed else None)
-    raise SystemExit(0 if r.get("proof", {}).get("verdict") == "PROVEN" else 1)
+               Path(args.crash_seed) if args.crash_seed else None,
+               args.ub_marker, args.fuzz_inputs)
+
+    # Exit 0 for a proof OR a clean bounded verification. Both are real results;
+    # only the label differs, and the label is never inflated.
+    proven = r.get("proof", {}).get("verdict") == "PROVEN"
+    bounded_ok = (r.get("bounded") or {}).get("verdict") == "BOUNDED_VERIFICATION"
+    raise SystemExit(0 if (proven or bounded_ok) else 1)

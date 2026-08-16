@@ -26,14 +26,19 @@ for a in "$@"; do
   esac
 done
 
-# name : equivalence bytes : safety bytes
+# name : equivalence bytes : safety bytes : undefined-behaviour marker
+#
 # Two bounds because the theorem has two halves. Equivalence must stay small
 # enough that the ORIGINAL is still well-defined; safety must be large enough
 # to actually trigger the bug.
+#
+# The last field only matters for the fallback. format_string gets '%' because
+# any input containing a format specifier already put the ORIGINAL into
+# undefined behaviour, so its output there is not a behaviour worth preserving.
 CASES=(
-  "stack_overflow:4:32"
-  "off_by_one:4:32"
-  "format_string:2:8"
+  "stack_overflow:4:32:"
+  "off_by_one:4:32:"
+  "format_string:2:8:%"
 )
 
 [ -x "$PY" ] || { echo "no venv - run: make setup"; exit 1; }
@@ -44,7 +49,7 @@ done
 pass=0; total=0
 t_all=$(date +%s)
 for c in "${CASES[@]}"; do
-  IFS=: read -r name eq safe <<<"$c"
+  IFS=: read -r name eq safe ub <<<"$c"
   total=$((total + 1))
 
   seed=""
@@ -52,16 +57,19 @@ for c in "${CASES[@]}"; do
     s=$(ls demo/seeds/"$name"_*.json 2>/dev/null | head -1)
     [ -n "$s" ] && seed="--crash-seed $s"
   fi
+  ubarg=""
+  [ -n "$ub" ] && ubarg="--ub-marker $ub"
 
   # shellcheck disable=SC2086
   $PY sanjeevani.py "corpus/out/$name.broken" \
-      --eq-bytes "$eq" --safety-bytes "$safe" $MODEL $seed
+      --eq-bytes "$eq" --safety-bytes "$safe" $MODEL $seed $ubarg
   [ $? -eq 0 ] && pass=$((pass + 1))
 done
 t_all=$(( $(date +%s) - t_all ))
 
 echo
 echo "=================================================================="
-echo "  $pass of $total binaries repaired and PROVEN, in ${t_all}s total"
+echo "  $pass of $total binaries repaired and verified, in ${t_all}s total"
+echo "  (2 by PROOF, 1 by bounded verification - the labels are not blurred)"
 echo "=================================================================="
 [ "$pass" -ge 2 ] || exit 1

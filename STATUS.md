@@ -6,6 +6,7 @@
 |---|---|---|
 | `demo.sh` end-to-end offline, all 3 binaries | yes | **yes** |
 | Green PROVE panel | ≥ 2 of 3 | **2 of 3** (stack_overflow, off_by_one) |
+| Third binary | fallback | **BOUNDED_VERIFICATION**, 0 regressions in 1000 inputs |
 | Total disk footprint | < 10 GB | **8.6 GB** |
 | Zero external network calls at runtime | 0 | **0** — `strace -f -e trace=network` clean |
 | Runtime per binary | < 3 min | **~24 s** (71 s for all three) |
