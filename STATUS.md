@@ -1,5 +1,35 @@
 # STATUS
 
+## Phase 3 — FIND + LOCALISE  🟢 ACCEPTANCE MET
+
+```
+BINARY             TIME     EXECS    FAULT  BLAMED       FUNCTION
+format_string      6.16s    7543     libc   0x4011ae     FUN_00401156
+off_by_one         0.27s    14       libc   0x401228     FUN_00401156
+stack_overflow     0.28s    22       own    0x4011eb     FUN_00401193 (+callee FUN_00401156)
+```
+All three crash and localise well under the 5-minute budget. `finder/fuzz.py`
+runs AFL++ QEMU mode → gdb → Ghidra and writes `crashes/<name>_<hash>.json`
+with the crashing input (base64), the blamed address, and decompiled C.
+
+### Three problems found and fixed
+1. **The fault is usually not in our code.** `off_by_one` dies inside `puts()` and
+   `format_string` inside `printf()`, both deep in libc, because that is where the
+   corrupted pointer is finally dereferenced. Handing Ghidra a libc address is
+   useless — it only analysed our binary. Now we walk back up the stack to the
+   first frame inside our own image, read from the ELF's PT_LOAD segments.
+2. **A smashed stack defeats the backtrace.** On the worst `stack_overflow` inputs
+   gdb reports garbage like `0x286686868` (literally our input bytes) and *no*
+   frame lands in our binary. The bug class that destroys the stack destroys the
+   evidence. Fallback added: angr replays the same concrete input and reports the
+   last basic block that belonged to us. Real hardware first, symbolic execution
+   as backup.
+3. **The blamed function often contains no bug.** A stack overflow in `greet()`
+   only faults once `greet` RETURNS, so blame lands on `main`, whose body is just
+   a call to `greet`. Phase 4 would have been asked to fix correct code. Ghidra
+   now decompiles the blamed function **and its callees**, so the `strcpy` is
+   visible where it matters.
+
 ## Phase 2 — PROVE  🟢 ACCEPTANCE MET (2 of 3 green, negative tests pass)
 
 ```
@@ -96,7 +126,20 @@ reporting *both* binaries as crashing inside angr's own simulated stack.)
 ### Next →
 1. **Phase 3 — FIND** (AFL++ QEMU mode + Ghidra localisation)
 2. `differential_fuzz.py` fallback for format_string
-3. llama.cpp still unverified — see below
+3. llama.cpp still unverified (needed for Phase 4, not before)
+
+### llama.cpp — 4 attempts, current hypothesis
+Never produced output. But it is NOT hung: earlier runs showed 100% CPU and a
+healthy 5.3 GB RSS, which is real work. Ruled out so far: default 32k context
+ballooning to 14 GB and thrashing (fixed with `-c 2048`), and blocking on stdin
+(no change with `</dev/null`).
+
+**Next hypothesis to test in Phase 4:** stdout is block-buffered when piped, and
+`timeout` kills the process with SIGTERM, so the buffered tokens are discarded
+before they are ever flushed. Every attempt so far both piped the output AND
+killed it on a timer, which would produce exactly the empty output we saw.
+Test with `stdbuf -o0`, redirect straight to a file instead of a pipe, and let it
+run to completion without a timer.
 
 ## Phase 1 — Setup + test corpus  🟢 mostly done, 2 background jobs running
 
