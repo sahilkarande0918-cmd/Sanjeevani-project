@@ -6,6 +6,12 @@ Fully offline. One laptop. Ethernet cable unplugged.
 
 Built for the Indian Army **Terrier Cyber Quest 2026** hackathon, AI Kavach track.
 
+## Team
+
+- [Sahil Karande](https://github.com/sahilkarande0918-cmd)
+- [Purvesh Mhatre](https://github.com/purvesh597)
+- [Pranav Shripannavar](https://github.com/PranavShripannavar)
+
 ---
 
 ## The problem
